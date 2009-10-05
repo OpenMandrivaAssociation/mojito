@@ -36,6 +36,7 @@ Summary: Mojito development environment
 Group: System/Libraries
 
 Requires: %{libname} = %{version}-%{release}
+Provides: %{name}-devel
 
 %description -n %{develname}
 Header files and libraries for Mojito
