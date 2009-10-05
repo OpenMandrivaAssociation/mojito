@@ -19,7 +19,7 @@ BuildRequires: libdbus-glib-devel
 BuildRequires: gnome-keyring-devel
 BuildRequires: intltool
 BuildRequires: twitter-glib-devel
-BuildRequires: rest-devel >= 0.3
+BuildRequires: librest-devel >= 0.3
 
 %description
 Social data aggregator for Moblin
