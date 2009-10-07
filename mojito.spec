@@ -68,7 +68,7 @@ NOCONFIGURE=1 ./autogen.sh
 %configure2_5x	--prefix=/usr \
 		--with-online=connman \
 		--enable-myspace-key \
-		--enable-flickr-key \
+		--enable-flickr-key=1d92d04278e17e65aba27bcbca8995f4:9635a61d1c429528 \
 		--enable-twitter-key \
 		--enable-lastfm-key=107ad3f94128bce49749031121b209e7
 %make
