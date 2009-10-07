@@ -27,6 +27,7 @@ Social data aggregator for Moblin
 %package -n %{libname}
 Summary: Moblin's social data aggregator library
 Group: System/Libraries
+Requires: %{name} = %{version}-%{release}
 
 %description -n %{libname}
 Social data aggregator for Moblin
@@ -67,15 +68,18 @@ rm -rf %{buildroot}
 %clean
 rm -rf %{buildroot}
 
-%files -n %{libname}
+%files
 %defattr(-,root,root,-)
-%doc COPYING ChangeLog README NEWS TODO AUTHORS
-%{_libdir}/libmojito*.so.*
 %{_libdir}/mojito/services/*.so
 %{_libdir}/mojito-core
 %{_datadir}/dbus-1/services/mojito.service
 %{_datadir}/mojito/services/*.keys
 %{_datadir}/mojito/services/*.png
+
+%files -n %{libname}
+%defattr(-,root,root,-)
+%doc COPYING ChangeLog README NEWS TODO AUTHORS
+%{_libdir}/libmojito*.so.*
 %{_datadir}/locale/*
 
 %files -n %{develname}
