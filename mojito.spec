@@ -80,7 +80,7 @@ rm -rf %{buildroot}
 %files -n %{libname}
 %defattr(-,root,root,-)
 %doc COPYING ChangeLog README NEWS TODO AUTHORS
-%{_libdir}/libmojito*.so.*
+%{_libdir}/libmojito*.so.%{major}*
 
 %files -n %{develname}
 %defattr(-,root,root,-)
