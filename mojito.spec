@@ -76,7 +76,7 @@ perl -pi -e 's,&& ./configure.*,,' ./autogen.sh
 		--enable-flickr-key=1d92d04278e17e65aba27bcbca8995f4:9635a61d1c429528 \
 		--enable-facebook-key=590293b6aeda63685cddadad022339b8:a2e9e0ec4b4215172c250d6fbdc64d55 \
 		--enable-twitter-key=0YUkjT5HORHSuTs8oNcSzw:EWEqygCU1PavOrl6Cu0zUP4ajvSqeWSbqEAZx5WHis \
-		--enable-lastfm-key=107ad3f94128bce49749031121b209e7
+		--enable-lastfm-key
 %make
 
 %install
