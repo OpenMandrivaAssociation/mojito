@@ -64,11 +64,12 @@ NOCONFIGURE=1 ./autogen.sh
 %install
 rm -rf %{buildroot}
 %makeinstall_std
+%find_lang %{name}
 
 %clean
 rm -rf %{buildroot}
 
-%files
+%files -f %{name}.lang
 %defattr(-,root,root,-)
 %{_libdir}/mojito/services/*.so
 %{_libdir}/mojito-core
@@ -80,7 +81,6 @@ rm -rf %{buildroot}
 %defattr(-,root,root,-)
 %doc COPYING ChangeLog README NEWS TODO AUTHORS
 %{_libdir}/libmojito*.so.*
-%{_datadir}/locale/*
 
 %files -n %{develname}
 %defattr(-,root,root,-)
