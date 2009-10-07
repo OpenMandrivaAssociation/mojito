@@ -8,7 +8,7 @@ Group: System/Libraries
 Version: 0.21.2
 License: LGPL 2.1
 URL: http://www.moblin.org
-Release: %mkrel 1
+Release: %mkrel 2
 Source0: http://git.moblin.org/cgit.cgi/%{name}/snapshot/%{name}-%{version}.tar.gz
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-buildroot
 
@@ -71,6 +71,7 @@ rm -rf %{buildroot}
 
 %files -f %{name}.lang
 %defattr(-,root,root,-)
+%doc COPYING ChangeLog README NEWS TODO AUTHORS
 %{_libdir}/mojito/services/*.so
 %{_libdir}/mojito-core
 %{_datadir}/dbus-1/services/mojito.service
@@ -79,7 +80,6 @@ rm -rf %{buildroot}
 
 %files -n %{libname}
 %defattr(-,root,root,-)
-%doc COPYING ChangeLog README NEWS TODO AUTHORS
 %{_libdir}/libmojito*.so.%{major}*
 
 %files -n %{develname}
