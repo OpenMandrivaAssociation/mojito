@@ -72,6 +72,7 @@ perl -pi -e 's,&& ./configure.*,,' ./autogen.sh
 		--with-online=connman \
 		--enable-myspace-key \
 		--enable-flickr-key=1d92d04278e17e65aba27bcbca8995f4:9635a61d1c429528 \
+		--enable-facebook-key=590293b6aeda63685cddadad022339b8:a2e9e0ec4b4215172c250d6fbdc64d55 \
 		--enable-twitter-key \
 		--enable-lastfm-key=107ad3f94128bce49749031121b209e7
 %make
