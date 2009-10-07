@@ -14,6 +14,7 @@ License: LGPL 2.1
 URL: http://www.moblin.org
 Release: %mkrel 2
 Source0: http://git.moblin.org/cgit.cgi/%{name}/snapshot/%{name}-%{version}.tar.gz
+Patch0: mojito-0.21.2-facebook.patch
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-buildroot
 
 BuildRequires: glib2-devel
@@ -56,6 +57,7 @@ Header files and libraries for Mojito
 
 %prep
 %setup -q
+%patch0 -p1 -b .facebook
 
 %build
 
