@@ -47,7 +47,6 @@ Social data aggregator for Moblin
 %package -n %{develname}
 Summary: Mojito development environment
 Group: System/Libraries
-
 Requires: %{libname} = %{version}-%{release}
 Requires: %{client_libname} = %{version}-%{release}
 Provides: %{name}-devel
