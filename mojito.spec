@@ -58,6 +58,7 @@ Header files and libraries for Mojito
 %prep
 %setup -q
 %patch0 -p1 -b .facebook
+perl -pi -e 's,&& ./configure.*,,' ./autogen.sh
 
 %build
 
@@ -66,7 +67,7 @@ Header files and libraries for Mojito
 # the key used below for last.fm is actually upstream.
 #
 
-NOCONFIGURE=1 ./autogen.sh
+./autogen.sh
 %configure2_5x	--prefix=/usr \
 		--with-online=connman \
 		--enable-myspace-key \
