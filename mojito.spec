@@ -2,6 +2,10 @@
 %define libname         %mklibname %{name} %{major}
 %define develname       %mklibname %{name} -d
 
+%define client_major    1
+%define client_name     %{name}-client
+%define client_libname  %mklibname %{client_name} %{major}
+
 Name: mojito
 Summary: A social data aggregator library
 Group: System/Libraries
@@ -32,11 +36,20 @@ Requires: %{name} = %{version}-%{release}
 %description -n %{libname}
 Social data aggregator for Moblin
 
+%package -n %{client_libname}
+Summary: Moblin's social data aggregator client library
+Group: System/Libraries
+Requires: %{name} = %{version}-%{release}
+
+%description -n %{client_libname}
+Social data aggregator for Moblin
+
 %package -n %{develname}
 Summary: Mojito development environment
 Group: System/Libraries
 
 Requires: %{libname} = %{version}-%{release}
+Requires: %{client_libname} = %{version}-%{release}
 Provides: %{name}-devel
 
 %description -n %{develname}
@@ -81,6 +94,10 @@ rm -rf %{buildroot}
 %files -n %{libname}
 %defattr(-,root,root,-)
 %{_libdir}/libmojito*.so.%{major}*
+
+%files -n %{client_libname}
+%defattr(-,root,root,-)
+%{_libdir}/libmojito-client.so.%{client_major}*
 
 %files -n %{develname}
 %defattr(-,root,root,-)
