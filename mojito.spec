@@ -12,7 +12,7 @@ Group: System/Libraries
 Version: 0.26.1
 License: LGPL 2.1
 URL: http://www.moblin.org
-Release: %mkrel 1
+Release: %mkrel 2
 Source0: http://git.moblin.org/cgit.cgi/%{name}/snapshot/%{name}-%{version}.tar.gz
 Patch0: mojito-0.26.1-facebook.patch
 Patch1: mojito-0.21.2-persona.patch
@@ -22,7 +22,7 @@ BuildRequires: glib2-devel
 BuildRequires: libsoup-devel
 BuildRequires: libGConf2-devel
 BuildRequires: libdbus-glib-devel
-BuildRequires: gnome-keyring-devel
+BuildRequires: libgnome-keyring-devel
 BuildRequires: intltool
 BuildRequires: twitter-glib-devel
 BuildRequires: librest-devel >= 0.3
