@@ -12,7 +12,7 @@ Group: System/Libraries
 Version: 0.26.1
 License: LGPL 2.1
 URL: http://www.moblin.org
-Release: %mkrel 2
+Release: %mkrel 3
 Source0: http://git.moblin.org/cgit.cgi/%{name}/snapshot/%{name}-%{version}.tar.gz
 Patch0: mojito-0.26.1-facebook.patch
 Patch1: mojito-0.21.2-persona.patch
