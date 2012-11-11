@@ -1,0 +1,943 @@
+diff -ruN mojito-0.26.1/configure.ac mojito-0.26.1.new/configure.ac
+--- mojito-0.26.1/configure.ac	2009-10-26 07:57:10.000000000 -0400
++++ mojito-0.26.1.new/configure.ac	2009-10-28 08:33:58.000000000 -0400
+@@ -104,7 +104,7 @@
+ MOJITO_API_KEY(Last.fm, lastfm, LASTFM)
+ MOJITO_OAUTH_KEYS(MySpace, myspace, MYSPACE)
+ MOJITO_OAUTH_KEYS(Twitter, twitter, TWITTER)
+-
++MOJITO_OAUTH_KEYS(Facebook, facebook, FACEBOOK)
+ 
+ servicesdir='${libdir}'/mojito/services
+ AC_SUBST(servicesdir)
+@@ -131,7 +131,8 @@
+         services/twitter/Makefile
+         services/myspace/Makefile
+         services/digg/Makefile
+-        tests/Makefile
++        services/facebook/Makefile
++	tests/Makefile
+         tools/Makefile
+         examples/Makefile
+         po/Makefile.in
+diff -ruN mojito-0.26.1/mojito-keyfob/Makefile.am mojito-0.26.1.new/mojito-keyfob/Makefile.am
+--- mojito-0.26.1/mojito-keyfob/Makefile.am	2009-10-26 07:57:10.000000000 -0400
++++ mojito-0.26.1.new/mojito-keyfob/Makefile.am	2009-10-28 08:33:06.000000000 -0400
+@@ -10,7 +10,8 @@
+ libmojito_keyfob_la_SOURCES = \
+ 	mojito-keyfob.h \
+ 	mojito-keyfob-flickr.c \
+-	mojito-keyfob-oauth.c
++	mojito-keyfob-oauth.c \
++	mojito-keyfob-facebook.c
+ 
+ libmojito_keyfob_la_HEADERS = \
+ 	mojito-keyfob.h
+diff -ruN mojito-0.26.1/mojito-keyfob/mojito-keyfob-facebook.c mojito-0.26.1.new/mojito-keyfob/mojito-keyfob-facebook.c
+--- mojito-0.26.1/mojito-keyfob/mojito-keyfob-facebook.c	1969-12-31 19:00:00.000000000 -0500
++++ mojito-0.26.1.new/mojito-keyfob/mojito-keyfob-facebook.c	2009-10-28 08:33:06.000000000 -0400
+@@ -0,0 +1,171 @@
++/*
++ * Mojito Facebook service support
++ * Copyright (C) 2009 Novell, Inc.
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms and conditions of the GNU Lesser General Public License,
++ * version 2.1, as published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope it will be useful, but WITHOUT ANY
++ * WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
++ * FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public License for
++ * more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public License
++ * along with this program; if not, write to the Free Software Foundation,
++ * Inc., 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
++ */
++
++#include <string.h>
++#include <mojito-keyfob/mojito-keyfob.h>
++#include <rest-extras/facebook-proxy.h>
++#include <gnome-keyring.h>
++
++#define FACEBOOK_SERVER "http://facebook.com/"
++
++static const GnomeKeyringPasswordSchema facebook_schema = {
++  GNOME_KEYRING_ITEM_GENERIC_SECRET,
++  {
++    { "server", GNOME_KEYRING_ATTRIBUTE_TYPE_STRING },
++    { "api-key", GNOME_KEYRING_ATTRIBUTE_TYPE_STRING },
++    { NULL, 0 }
++  }
++};
++
++typedef struct {
++  FacebookProxy *proxy;
++  MojitoKeyfobCallback callback;
++  gpointer user_data;
++} CallbackData;
++
++/*
++ * Split @string on whitespace into two strings and base-64 decode them.
++ */
++static gboolean
++decode (const char *string, char **token, char **token_secret)
++{
++  char **encoded_keys;
++  gboolean ret = FALSE;
++  gsize len;
++
++  g_assert (string);
++  g_assert (token);
++  g_assert (token_secret);
++
++  encoded_keys = g_strsplit (string, " ", 2);
++
++  if (encoded_keys[0] && encoded_keys[1]) {
++    *token = (char*)g_base64_decode (encoded_keys[0], &len);
++    *token_secret = (char*)g_base64_decode (encoded_keys[1], &len);
++    ret = TRUE;
++  }
++
++  g_strfreev (encoded_keys);
++
++  return ret;
++}
++
++//#if 0
++static void
++callback_data_free (CallbackData *data)
++{
++  g_object_unref (data->proxy);
++  g_slice_free (CallbackData, data);
++}
++
++/*
++ * Callback from gnome-keyring with the result of looking up the server/key
++ * pair.  If this returns a secret then we can decode it and callback, otherwise
++ * we have to ask the user to authenticate.
++ */
++static void
++find_facebook_key_cb (GnomeKeyringResult result,
++             const char *string,
++             gpointer user_data)
++{
++  CallbackData *data = user_data;
++
++  if (result == GNOME_KEYRING_RESULT_OK) {
++    char *session = NULL, *app_secret = NULL;
++
++    if (decode (string, &session, &app_secret)) {
++      /*
++       * TODO: is it possible to validate these tokens generically? If so then
++       * it should be validated here, otherwise we need a way to clear the
++       * tokens for a particular key so that re-auth works.
++       */
++      facebook_proxy_set_session_key (data->proxy, session);
++      facebook_proxy_set_app_secret (data->proxy, app_secret);
++
++      g_free (session);
++      g_free (app_secret);
++
++      data->callback ((RestProxy*)data->proxy, TRUE, data->user_data);
++    } else {
++      data->callback ((RestProxy*)data->proxy, FALSE, data->user_data);
++    }
++  } else {
++    data->callback ((RestProxy*)data->proxy, FALSE, data->user_data);
++  }
++
++  /* Cleanup of data is done by gnome-keyring, bless it */
++}
++
++void
++mojito_keyfob_facebook (FacebookProxy *proxy,
++                          MojitoKeyfobCallback callback,
++                          gpointer user_data)
++{
++  const char *key;
++  CallbackData *data;
++
++  /* TODO: hacky, make a proper singleton or proper object */
++  data = g_slice_new0 (CallbackData);
++  data->proxy = g_object_ref (proxy);
++  data->callback = callback;
++  data->user_data = user_data;
++
++  key = facebook_proxy_get_api_key (proxy);
++
++  gnome_keyring_find_password (&facebook_schema,
++                               find_facebook_key_cb,
++                               data, (GDestroyNotify)callback_data_free,
++                               "server", FACEBOOK_SERVER,
++                               "api-key", key,
++                               NULL);
++}
++//#endif
++
++gboolean
++mojito_keyfob_facebook_sync (FacebookProxy *proxy)
++{
++  const char *key;
++  char *password = NULL;
++  GnomeKeyringResult result;
++
++  key = facebook_proxy_get_api_key (proxy);
++
++  result = gnome_keyring_find_password_sync (&facebook_schema, &password,
++                                             "server", FACEBOOK_SERVER,
++                                             "api-key", key,
++                                             NULL);
++
++  if (result == GNOME_KEYRING_RESULT_OK) {
++    char *session = NULL, *secret = NULL;
++    if (decode (password, &session, &secret)) {
++      facebook_proxy_set_app_secret (proxy, secret);
++      facebook_proxy_set_session_key (proxy, session);
++
++      g_free (session);
++      g_free (secret);
++      gnome_keyring_free_password (password);
++
++      return TRUE;
++    } else {
++      gnome_keyring_free_password (password);
++      return FALSE;
++    }
++  } else {
++    return FALSE;
++  }
++}
+diff -ruN mojito-0.26.1/mojito-keyfob/mojito-keyfob.h mojito-0.26.1.new/mojito-keyfob/mojito-keyfob.h
+--- mojito-0.26.1/mojito-keyfob/mojito-keyfob.h	2009-10-26 07:57:10.000000000 -0400
++++ mojito-0.26.1.new/mojito-keyfob/mojito-keyfob.h	2009-10-28 08:35:47.000000000 -0400
+@@ -3,6 +3,7 @@
+ 
+ #include <rest/oauth-proxy.h>
+ #include <rest-extras/flickr-proxy.h>
++#include <rest-extras/facebook-proxy.h>
+ 
+ G_BEGIN_DECLS
+ 
+@@ -21,6 +22,12 @@
+ 
+ gboolean mojito_keyfob_flickr_sync (FlickrProxy *proxy);
+ 
++void mojito_keyfob_facebook (FacebookProxy *proxy,
++                          MojitoKeyfobCallback callback,
++                          gpointer user_data);
++
++gboolean mojito_keyfob_facebook_sync (FacebookProxy *proxy);
++
+ G_END_DECLS
+ 
+ #endif /* __MOJITO_KEYFOB_H__ */
+diff -ruN mojito-0.26.1/mojito-keystore/mojito-keystore.c mojito-0.26.1.new/mojito-keystore/mojito-keystore.c
+--- mojito-0.26.1/mojito-keystore/mojito-keystore.c	2009-10-26 07:57:10.000000000 -0400
++++ mojito-0.26.1.new/mojito-keystore/mojito-keystore.c	2009-10-28 08:33:06.000000000 -0400
+@@ -52,6 +52,9 @@
+ #ifdef DIGG_APIKEY
+   { "digg", DIGG_APIKEY, NULL },
+ #endif
++#ifdef FACEBOOK_APIKEY
++  { "facebook", FACEBOOK_APIKEY, FACEBOOK_SECRET },
++#endif
+   { NULL }
+ };
+ 
+diff -ruN mojito-0.26.1/services/facebook/facebook.c mojito-0.26.1.new/services/facebook/facebook.c
+--- mojito-0.26.1/services/facebook/facebook.c	1969-12-31 19:00:00.000000000 -0500
++++ mojito-0.26.1.new/services/facebook/facebook.c	2009-10-28 08:33:06.000000000 -0400
+@@ -0,0 +1,560 @@
++/*
++ * Mojito Facebook service support
++ * Copyright (C) 2009 Novell, Inc.
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms and conditions of the GNU Lesser General Public License,
++ * version 2.1, as published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope it will be useful, but WITHOUT ANY
++ * WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
++ * FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public License for
++ * more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public License
++ * along with this program; if not, write to the Free Software Foundation,
++ * Inc., 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
++ */
++
++#include <config.h>
++#include <time.h>
++#include <string.h>
++#include "facebook.h"
++#include <mojito/mojito-item.h>
++#include <mojito/mojito-set.h>
++#include <mojito/mojito-utils.h>
++#include <mojito/mojito-web.h>
++#include <mojito-keyfob/mojito-keyfob.h>
++#include <mojito-keystore/mojito-keystore.h>
++#include <rest/oauth-proxy.h>
++#include <rest/rest-xml-parser.h>
++#include <mojito/mojito-online.h>
++
++G_DEFINE_TYPE (MojitoServiceFacebook, mojito_service_facebook, MOJITO_TYPE_SERVICE)
++
++#define GET_PRIVATE(o) \
++  (G_TYPE_INSTANCE_GET_PRIVATE ((o), MOJITO_TYPE_SERVICE_FACEBOOK, MojitoServiceFacebookPrivate))
++
++struct _MojitoServiceFacebookPrivate {
++  gboolean running;
++  RestProxy *proxy;
++  char *uid;
++  char *display_name;
++  char *profile_url;
++  char *pic_square;
++};
++
++RestXmlNode *
++node_from_call (RestProxyCall *call)
++{
++  static RestXmlParser *parser = NULL;
++  RestXmlNode *root;
++
++  if (call == NULL)
++    return NULL;
++
++  if (parser == NULL)
++    parser = rest_xml_parser_new ();
++
++  if (!SOUP_STATUS_IS_SUCCESSFUL (rest_proxy_call_get_status_code (call))) {
++    g_message ("Error from Facebook: %s (%d)",
++               rest_proxy_call_get_status_message (call),
++               rest_proxy_call_get_status_code (call));
++    return NULL;
++  }
++
++  root = rest_xml_parser_parse_from_data (parser,
++                                          rest_proxy_call_get_payload (call),
++                                          rest_proxy_call_get_payload_length (call));
++
++  if (root == NULL) {
++    g_message ("Error from Facebook: %s",
++               rest_proxy_call_get_payload (call));
++    return NULL;
++  }
++
++  if (strcmp (root->name, "error_response") == 0) {
++    RestXmlNode *node;
++    node = rest_xml_node_find (root, "error_msg");
++    g_message ("Error response from Facebook: %s\n", node->content);
++    rest_xml_node_unref (root);
++    return NULL;
++  } else {
++    return root;
++  }
++}
++
++static char *
++get_utc_date (const char *s)
++{
++  struct tm tm;
++  time_t t;
++
++  if (s == NULL)
++    return NULL;
++
++  strptime (s, "%s", &tm);
++  t = mktime (&tm);
++
++  return mojito_time_t_to_string (t);
++}
++
++static void
++got_status_cb (RestProxyCall *call,
++             GError        *error,
++             GObject       *weak_object,
++             gpointer       userdata)
++{
++  MojitoService *service = MOJITO_SERVICE (weak_object);
++  MojitoServiceFacebookPrivate *priv = MOJITO_SERVICE_FACEBOOK (service)->priv;
++  RestXmlNode *root, *node;
++  MojitoSet *set;
++
++  if (error) {
++    g_message ("Error: %s", error->message);
++    return;
++  }
++
++  root = node_from_call (call);
++  if (!root)
++    return;
++
++  set = mojito_item_set_new ();
++  /*
++  example return XML:
++  fields: uid, name, pic_square, status
++  <user>
++    <name>Geckosuse Novell</name>
++    <status>
++      <message>Test status on moblin.</message>
++      <time>1249546470</time>
++      <status_id>137108505991</status_id>
++    </status>
++    <uid>100000151172819</uid>
++    <pic_square>https://secure-profile.facebook.com/v230/109/50/q100000151172819_377.jpg</pic_square>
++    <profile_url>http://www.facebook.com/profile.php?id=100000151172819</profile_url>
++  </user>
++  */
++
++  node = rest_xml_node_find (root, "user");
++
++  while (node) {
++    MojitoItem *item;
++    char *id, *content;
++    RestXmlNode *subnode, *status_node;
++
++    item = mojito_item_new ();
++    mojito_item_set_service (item, service);
++    
++    status_node = rest_xml_node_find (node, "status");
++    content = rest_xml_node_find (status_node, "message")->content;
++
++    if (content == NULL) {
++      node = node->next;
++      continue;
++    }
++
++    mojito_item_put (item, "content", content);
++
++    id = g_strconcat ("facebook-",
++                      rest_xml_node_find (node, "uid")->content,
++                      "-",
++                      rest_xml_node_find (status_node, "time")->content,
++                      NULL);
++    mojito_item_take (item, "id", id);
++
++    mojito_item_take (item, "date",
++                      get_utc_date (rest_xml_node_find (status_node, "time")->content));
++
++    mojito_item_put (item, "authorid", rest_xml_node_find (node, "uid")->content);
++    subnode = rest_xml_node_find (node, "name");
++    if (subnode && subnode->content)
++      mojito_item_put (item, "author", subnode->content);
++    else
++      mojito_item_put (item, "author", priv->display_name);
++
++    /* TODO: async downloading */
++    subnode = rest_xml_node_find (node, "pic_square");
++    if (subnode && subnode->content)
++      mojito_item_take (item, "authoricon", mojito_web_download_image (subnode->content));
++
++    subnode = rest_xml_node_find (node, "profile_url");
++    if (subnode && subnode->content)
++      mojito_item_put (item, "url", subnode->content);
++    else
++      mojito_item_put (item, "url", priv->profile_url);
++
++    mojito_set_add (set, G_OBJECT (item));
++    g_object_unref (item);
++
++    node = node->next;
++  }
++
++  rest_xml_node_unref (root);
++
++  if (!mojito_set_is_empty (set))
++    mojito_service_emit_refreshed (service, set);
++
++  mojito_set_unref (set);
++}
++
++static void
++get_status_updates (MojitoServiceFacebook *service)
++{
++  MojitoServiceFacebookPrivate *priv = service->priv;
++  RestProxyCall *call;
++  GHashTable *params = NULL;
++  char *fql;
++
++  if (!priv->uid)
++    return;
++
++  call = rest_proxy_new_call (priv->proxy);
++
++  g_object_get (service, "params", &params, NULL);
++
++  if (params && g_hash_table_lookup (params, "own")) {
++    rest_proxy_call_set_function (call, "Users.getInfo");
++    rest_proxy_call_add_params (call, 
++                                "uids", priv->uid,
++                                "fields", "name, profile_url, pic_square, status",
++                                NULL);
++  } else {
++    /* Get the friend's name, status, profile_url, pic_square*/
++    rest_proxy_call_set_function (call, "fql.query");
++    fql = g_strdup_printf ("SELECT uid,name,status,profile_url,pic_square FROM user WHERE uid IN (SELECT uid2 FROM friend WHERE uid1= %s)", priv->uid);
++    rest_proxy_call_add_param (call, "query", fql);
++  }
++  if (params)
++    g_hash_table_unref (params);
++
++  rest_proxy_call_async (call, got_status_cb, (GObject*)service, NULL, NULL);
++}
++
++/*
++ * For a given parent @node, get the child node called @name and return a copy
++ * of the content, or NULL. If the content is the empty string, NULL is
++ * returned.
++ */
++static char *
++get_child_node_value (RestXmlNode *node, const char *name)
++{
++  RestXmlNode *subnode;
++
++  g_assert (node);
++  g_assert (name);
++
++  subnode = rest_xml_node_find (node, name);
++  if (!subnode)
++    return NULL;
++
++  if (subnode->content && subnode->content[0])
++    return g_strdup (subnode->content);
++  else
++    return NULL;
++}
++
++static void
++got_user_cb (RestProxyCall *call,
++             GError        *error,
++             GObject       *weak_object,
++             gpointer       userdata)
++{
++  MojitoServiceFacebook *service = MOJITO_SERVICE_FACEBOOK (weak_object);
++  MojitoServiceFacebookPrivate *priv = service->priv;
++  RestXmlNode *node;
++
++  if (error) {
++    g_message ("Error: %s", error->message);
++    return;
++  }
++
++  node = node_from_call (call);
++  if (!node)
++    return;
++
++  priv->uid = g_strdup (node->content);
++  rest_xml_node_unref (node);
++
++  get_status_updates (service);
++}
++
++static void
++got_tokens_cb (RestProxy *proxy, gboolean authorised, gpointer user_data)
++{
++  MojitoServiceFacebook *facebook = MOJITO_SERVICE_FACEBOOK (user_data);
++  MojitoServiceFacebookPrivate *priv = facebook->priv;
++  RestProxyCall *call;
++
++  if (authorised) {
++    call = rest_proxy_new_call (priv->proxy);
++    rest_proxy_call_set_function (call, "users.getLoggedInUser");
++    rest_proxy_call_async (call, got_user_cb, (GObject*)facebook, NULL, NULL);
++  } else {
++    mojito_service_emit_refreshed ((MojitoService *)facebook, NULL);
++  }
++}
++
++static void
++start (MojitoService *service)
++{
++  MojitoServiceFacebook *facebook = (MojitoServiceFacebook*)service;
++
++  facebook->priv->running = TRUE;
++}
++
++static void
++refresh (MojitoService *service)
++{
++  MojitoServiceFacebook *facebook = (MojitoServiceFacebook*)service;
++  MojitoServiceFacebookPrivate *priv = facebook->priv;
++
++  if (!priv->running)
++    return;
++
++  if (priv->uid == NULL) {
++    mojito_keyfob_facebook ((FacebookProxy*)priv->proxy, got_tokens_cb, service);
++  } else {
++    get_status_updates (facebook);
++  }
++}
++
++
++static const char ** get_dynamic_caps (MojitoService *service);
++
++static gboolean
++sync_auth (MojitoServiceFacebook *facebook)
++{
++  MojitoService *service = (MojitoService *)facebook;
++  MojitoServiceFacebookPrivate *priv = facebook->priv;
++
++  if (priv->uid == NULL || priv->pic_square == NULL ) {
++    RestProxyCall *call;
++    RestXmlNode *node;
++
++    if (!mojito_keyfob_facebook_sync ((FacebookProxy*)priv->proxy)) {
++      g_debug ("cannot get keys from keyfob");
++      return FALSE;
++    }
++
++    call = rest_proxy_new_call (priv->proxy);
++    rest_proxy_call_set_function (call, "users.getLoggedInUser");
++    if (!rest_proxy_call_run (call, NULL, NULL))
++      return FALSE;
++
++    node = node_from_call (call);
++    if (!node)
++      return FALSE;
++
++    priv->uid = g_strdup (node->content);
++    rest_xml_node_unref (node);
++
++    call = rest_proxy_new_call (priv->proxy);
++    rest_proxy_call_set_function (call, "Users.getInfo");
++    rest_proxy_call_add_param (call, "uids", priv->uid);
++    rest_proxy_call_add_param (call, "fields", "pic_square");
++    if (!rest_proxy_call_run (call, NULL, NULL))
++      return FALSE;
++
++    node = node_from_call (call);
++    if (!node)
++      return FALSE;
++
++    priv->pic_square = get_child_node_value (node, "pic_square");
++    rest_xml_node_unref (node);
++
++    mojito_service_emit_capabilities_changed (service, get_dynamic_caps (service));
++  }
++
++  return TRUE;
++}
++
++static const char **
++get_static_caps (MojitoService *service)
++{
++  static const char * caps[] = {
++    CAN_UPDATE_STATUS,
++    CAN_REQUEST_AVATAR,
++    NULL
++  };
++
++  return caps;
++}
++
++static const char **
++get_dynamic_caps (MojitoService *service)
++{
++  MojitoServiceFacebook *facebook = MOJITO_SERVICE_FACEBOOK (service);
++  static const char * caps[] = {
++    CAN_UPDATE_STATUS,
++    CAN_REQUEST_AVATAR,
++    NULL
++  };
++  static const char * no_caps[] = { NULL };
++
++  if (sync_auth (facebook))
++    return caps;
++  else
++    return no_caps;
++}
++
++static gchar *
++get_persona_icon (MojitoService *service)
++{
++  MojitoServiceFacebook *facebook = MOJITO_SERVICE_FACEBOOK (service);
++  MojitoServiceFacebookPrivate *priv = facebook->priv;
++
++  if (sync_auth (facebook))
++    return mojito_web_download_image (priv->pic_square);
++  else
++    return NULL;
++}
++
++static void
++_avatar_downloaded_cb (const gchar *uri,
++                       gchar       *local_path,
++                       gpointer     userdata)
++{
++  MojitoService *service = MOJITO_SERVICE (userdata);
++
++  mojito_service_emit_avatar_retrieved (service, local_path);
++  g_free (local_path);
++}
++
++static void
++request_avatar (MojitoService *service)
++{
++  MojitoServiceFacebookPrivate *priv = GET_PRIVATE (service);
++
++  if (priv->pic_square)
++  {
++    mojito_web_download_image_async (priv->pic_square,
++                                     _avatar_downloaded_cb,
++                                     service);
++  } else {
++    mojito_service_emit_avatar_retrieved (service, NULL);
++  }
++}
++
++static gboolean
++update_status (MojitoService *service, const char *msg)
++{
++  MojitoServiceFacebook *facebook = MOJITO_SERVICE_FACEBOOK (service);
++  MojitoServiceFacebookPrivate *priv = facebook->priv;
++  RestProxyCall *call;
++  RestXmlNode *node;
++  gboolean ret;
++
++  if (!sync_auth (facebook))
++    return FALSE;
++
++  call = rest_proxy_new_call (priv->proxy);
++  rest_proxy_call_set_function (call, "Users.hasAppPermission");
++  rest_proxy_call_add_param (call, "ext_perm", "publish_stream");
++  
++  if (!rest_proxy_call_run (call, NULL, NULL))
++    return FALSE;
++
++  node = node_from_call (call);
++  if (!node)
++    return FALSE;
++
++  if (g_strcmp0(node->content, "0") == 0){
++    rest_xml_node_unref (node);
++    return FALSE;
++  }
++  rest_xml_node_unref (node);
++
++  call = rest_proxy_new_call (priv->proxy);
++  rest_proxy_call_set_function (call, "Status.set");
++  rest_proxy_call_add_param (call, "status", msg);
++
++  ret = rest_proxy_call_run (call, NULL, NULL);
++
++  g_object_unref (call);
++
++  return ret;
++}
++
++static const char *
++mojito_service_facebook_get_name (MojitoService *service)
++{
++  return "facebook";
++}
++
++static void
++online_notify (gboolean online, gpointer user_data)
++{
++  MojitoServiceFacebook *service = (MojitoServiceFacebook *) user_data;
++
++  if (online) {
++    sync_auth (service);
++  } else {
++    mojito_service_emit_capabilities_changed ((MojitoService *)service, NULL);
++  }
++}
++
++static void
++mojito_service_facebook_dispose (GObject *object)
++{
++  MojitoServiceFacebookPrivate *priv = MOJITO_SERVICE_FACEBOOK (object)->priv;
++
++  if (priv->proxy) {
++    g_object_unref (priv->proxy);
++    priv->proxy = NULL;
++  }
++
++  G_OBJECT_CLASS (mojito_service_facebook_parent_class)->dispose (object);
++}
++
++static void
++mojito_service_facebook_finalize (GObject *object)
++{
++  MojitoServiceFacebookPrivate *priv = MOJITO_SERVICE_FACEBOOK (object)->priv;
++
++  mojito_online_remove_notify (online_notify, object);
++  g_free (priv->uid);
++
++  G_OBJECT_CLASS (mojito_service_facebook_parent_class)->finalize (object);
++}
++
++static void
++mojito_service_facebook_class_init (MojitoServiceFacebookClass *klass)
++{
++  GObjectClass *object_class = G_OBJECT_CLASS (klass);
++  MojitoServiceClass *service_class = MOJITO_SERVICE_CLASS (klass);
++
++  g_type_class_add_private (klass, sizeof (MojitoServiceFacebookPrivate));
++
++  object_class->dispose = mojito_service_facebook_dispose;
++  object_class->finalize = mojito_service_facebook_finalize;
++
++  service_class->get_name = mojito_service_facebook_get_name;
++  service_class->get_static_caps = get_static_caps;
++  service_class->get_dynamic_caps = get_dynamic_caps;
++  service_class->get_persona_icon = get_persona_icon;
++  service_class->update_status = update_status;
++  service_class->start = start;
++  service_class->refresh = refresh;
++  service_class->request_avatar = request_avatar;
++}
++
++static void
++mojito_service_facebook_init (MojitoServiceFacebook *self)
++{
++  MojitoServiceFacebookPrivate *priv;
++  const char *key = NULL, *secret = NULL;
++
++  priv = self->priv = GET_PRIVATE (self);
++
++  mojito_keystore_get_key_secret ("facebook", &key, &secret);
++
++  priv->proxy = facebook_proxy_new (key, secret);
++
++  if (mojito_is_online ())
++  {
++    online_notify (TRUE, self);
++  }
++
++  mojito_online_add_notify (online_notify, self);
++}
+diff -ruN mojito-0.26.1/services/facebook/facebook.h mojito-0.26.1.new/services/facebook/facebook.h
+--- mojito-0.26.1/services/facebook/facebook.h	1969-12-31 19:00:00.000000000 -0500
++++ mojito-0.26.1.new/services/facebook/facebook.h	2009-10-28 08:33:06.000000000 -0400
+@@ -0,0 +1,58 @@
++/*
++ * Mojito Facebook service support
++ * Copyright (C) 2009 Novell, Inc.
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms and conditions of the GNU Lesser General Public License,
++ * version 2.1, as published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope it will be useful, but WITHOUT ANY
++ * WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
++ * FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public License for
++ * more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public License
++ * along with this program; if not, write to the Free Software Foundation,
++ * Inc., 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
++ */
++
++#ifndef _MOJITO_SERVICE_FACEBOOK
++#define _MOJITO_SERVICE_FACEBOOK
++
++#include <mojito/mojito-service.h>
++
++G_BEGIN_DECLS
++
++#define MOJITO_TYPE_SERVICE_FACEBOOK mojito_service_facebook_get_type()
++
++#define MOJITO_SERVICE_FACEBOOK(obj) \
++  (G_TYPE_CHECK_INSTANCE_CAST ((obj), MOJITO_TYPE_SERVICE_FACEBOOK, MojitoServiceFacebook))
++
++#define MOJITO_SERVICE_FACEBOOK_CLASS(klass) \
++  (G_TYPE_CHECK_CLASS_CAST ((klass), MOJITO_TYPE_SERVICE_FACEBOOK, MojitoServiceFacebookClass))
++
++#define MOJITO_IS_SERVICE_FACEBOOK(obj) \
++  (G_TYPE_CHECK_INSTANCE_TYPE ((obj), MOJITO_TYPE_SERVICE_FACEBOOK))
++
++#define MOJITO_IS_SERVICE_FACEBOOK_CLASS(klass) \
++  (G_TYPE_CHECK_CLASS_TYPE ((klass), MOJITO_TYPE_SERVICE_FACEBOOK))
++
++#define MOJITO_SERVICE_FACEBOOK_GET_CLASS(obj) \
++  (G_TYPE_INSTANCE_GET_CLASS ((obj), MOJITO_TYPE_SERVICE_FACEBOOK, MojitoServiceFacebookClass))
++
++typedef struct _MojitoServiceFacebookPrivate MojitoServiceFacebookPrivate;
++
++typedef struct {
++  MojitoService parent;
++  MojitoServiceFacebookPrivate *priv;
++} MojitoServiceFacebook;
++
++typedef struct {
++  MojitoServiceClass parent_class;
++} MojitoServiceFacebookClass;
++
++GType mojito_service_facebook_get_type (void);
++
++G_END_DECLS
++
++#endif /* _MOJITO_SERVICE_FACEBOOK */
+diff -ruN mojito-0.26.1/services/facebook/facebook.keys.in mojito-0.26.1.new/services/facebook/facebook.keys.in
+--- mojito-0.26.1/services/facebook/facebook.keys.in	1969-12-31 19:00:00.000000000 -0500
++++ mojito-0.26.1.new/services/facebook/facebook.keys.in	2009-10-28 08:33:06.000000000 -0400
+@@ -0,0 +1,5 @@
++[MojitoService]
++_Name=Facebook
++_Description=Facebook - social networking for snobs
++Link=http://www.facebook.com/
++AuthType=facebook
+diff -ruN mojito-0.26.1/services/facebook/Makefile.am mojito-0.26.1.new/services/facebook/Makefile.am
+--- mojito-0.26.1/services/facebook/Makefile.am	1969-12-31 19:00:00.000000000 -0500
++++ mojito-0.26.1.new/services/facebook/Makefile.am	2009-10-28 08:33:06.000000000 -0400
+@@ -0,0 +1,10 @@
++services_LTLIBRARIES = libfacebook.la
++libfacebook_la_SOURCES = module.c facebook.c facebook.h
++libfacebook_la_CFLAGS = -I$(top_srcdir) $(REST_CFLAGS) -DG_LOG_DOMAIN=\"Facebook\"
++libfacebook_la_LIBADD = $(top_builddir)/mojito/libmojito.la $(top_builddir)/mojito-keystore/libmojito-keystore.la $(top_builddir)/mojito-keyfob/libmojito-keyfob.la $(REST_LIBS)
++libfacebook_la_LDFLAGS = -module -avoid-version
++
++servicesdata_DATA = facebook.keys
++CLEANFILES = facebook.keys
++EXTRA_DIST = facebook.keys.in
++@INTLTOOL_MOJITO_KEYS@
+diff -ruN mojito-0.26.1/services/facebook/module.c mojito-0.26.1.new/services/facebook/module.c
+--- mojito-0.26.1/services/facebook/module.c	1969-12-31 19:00:00.000000000 -0500
++++ mojito-0.26.1.new/services/facebook/module.c	2009-10-28 08:33:06.000000000 -0400
+@@ -0,0 +1,32 @@
++/*
++ * Mojito Facebook service support
++ * Copyright (C) 2009 Novell, Inc.
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms and conditions of the GNU Lesser General Public License,
++ * version 2.1, as published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope it will be useful, but WITHOUT ANY
++ * WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
++ * FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public License for
++ * more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public License
++ * along with this program; if not, write to the Free Software Foundation,
++ * Inc., 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
++ */
++
++#include <mojito/mojito-module.h>
++#include "facebook.h"
++
++const gchar *
++mojito_module_get_name (void)
++{
++  return "facebook";
++}
++
++const GType
++mojito_module_get_type (void)
++{
++  return MOJITO_TYPE_SERVICE_FACEBOOK;
++}
+diff -ruN mojito-0.26.1/services/Makefile.am mojito-0.26.1.new/services/Makefile.am
+--- mojito-0.26.1/services/Makefile.am	2009-10-26 07:57:10.000000000 -0400
++++ mojito-0.26.1.new/services/Makefile.am	2009-10-28 08:33:06.000000000 -0400
+@@ -19,3 +19,7 @@
+ if WITH_DIGG
+ SUBDIRS += digg
+ endif
++
++if WITH_FACEBOOK
++SUBDIRS += facebook
++endif
