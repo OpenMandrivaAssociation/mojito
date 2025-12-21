@@ -18,6 +18,11 @@ Patch0: mojito-0.26.1-facebook.patch
 Patch1: mojito-0.21.2-persona.patch
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-buildroot
 
+BuildRequires:	autoconf
+BuildRequires:	automake
+BuildRequires:	libtool-base
+BuildRequires:	slibtool
+BuildRequires:	make
 BuildRequires: glib2-devel
 BuildRequires: libsoup-devel
 BuildRequires: libGConf2-devel
